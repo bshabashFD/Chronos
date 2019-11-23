@@ -4,7 +4,12 @@ import pandas as pd
 class Chronos():
 
     ################################################################################
-    def __init__(self, G = 100, MU=50, LAMBDA=50, p_m=0.1):
+    def __init__(self, 
+                 G = 100, 
+                 MU=50, 
+                 LAMBDA=50, 
+                 p_m=0.1, 
+                 evaluation_function=None):
         self.G = 100
         self.MU = 50
         self.LAMBDA = 50
@@ -13,6 +18,13 @@ class Chronos():
 
         self.population_fitnesses = np.empty((MU,))
         self.offspring_fitnesses = np.empty((LAMBDA,))
+
+
+        def RMSE(y_true, y_pred):
+            return np.nanmean(np.abs(y_true - y_pred))
+
+        if (evaluation_function is None):
+            self.evaluation_function = RMSE
 
     
     ################################################################################
@@ -25,6 +37,8 @@ class Chronos():
             raise Exception('Chronos::fit. Can\'t deal with additional regressors yes.')
 
         
+    ################################################################################
+    
     ################################################################################
     def fit(self, y_df, lag=5):
         self.series_lag = lag
@@ -39,7 +53,8 @@ class Chronos():
                                        y_df['y'].iloc[i-max_lag:i].values)
         
         for i in range(self.MU):
-            self.population_fitnesses[i] = np.nanmean(np.abs(predictions[i] - y_df['y']))
+            self.population_fitnesses[i] = self.evaluation_function(y_df['y'], 
+                                                                    predictions[i])
         print(self.population_fitnesses)
         
         print(np.argmin(self.population_fitnesses))
