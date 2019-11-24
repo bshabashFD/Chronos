@@ -108,13 +108,14 @@ class Chronos():
                                        y_df['y'].iloc[i-max_lag:i].values)
             predictions[i] = basic_prediction
 
-        return self.evaluation_function(y_df['y'], predictions)
+        return self.evaluation_function(y_df['y'], predictions), predictions
     ################################################################################
     def fit(self, 
             y_df_train, 
             y_df_validation=None,
             lag=5):
         self.series_lag = lag
+        self.train_df = y_df_train
 
         max_lag = self.init_population()
 
@@ -130,11 +131,11 @@ class Chronos():
             self.find_best_individual()
 
 
-            train_best_fitness = self.best_individual_score(y_df_train, max_lag)
+            train_best_fitness, _ = self.best_individual_score(y_df_train, max_lag)
             self.train_history_.append(train_best_fitness)
             print_string += f'\t train_fitness: {train_best_fitness}'
             if (y_df_validation is not None):
-                validation_best_fitness = self.best_individual_score(y_df_validation, max_lag)
+                validation_best_fitness, _ = self.best_individual_score(y_df_validation, max_lag)
                 self.validation_history_.append(validation_best_fitness)
                 print_string += f'\t val_fitness: {validation_best_fitness}'
 
@@ -169,5 +170,13 @@ class Chronos():
     
 
     ################################################################################
+    def make_prediction_df(self, period=30):
+        return_df = pd.DataFrame({"ds": numpy.zeros((period,))
+                                  "y_hat":numpy.zeros((period,)})
+
+        self.train_df
+
+    ################################################################################
     def predict(y_hat_df):
+        #_, predictions = self.best_individual_score(y_hat_df, max_lag)
         pass
