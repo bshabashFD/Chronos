@@ -17,7 +17,9 @@ class Chronos():
                  LAMBDA=50, 
                  p_m=0.1, 
                  r_m = 0.01,
-                 evaluation_function=None):
+                 evaluation_function=None,
+                 yearly_seasonality=1,
+                 monthly_seasonality=1):
         self.G = G
         self.MU = MU
         self.LAMBDA = LAMBDA
@@ -26,10 +28,23 @@ class Chronos():
         self.extra_regressors = None
 
 
-        self.regression_params_start, self.regression_params_end = 0, 1
-        self.year_order = 1
+        self.param_number = 2
+        self.regression_const = 0
+        self.regression_coef = 1
+
+        if (yearly_seasonality != False):
+            self.year_order = yearly_seasonality
+            self.year_coef_start = self.param_number
+
+            self.param_number += self.year_order + 1
+            self.year_coef_end = self.param_number
+        if (monthly_seasonality != False):
+            self.month_order = monthly_seasonality
+            self.month_coef_start = self.param_number
+            self.param_number += self.month_order + 1
+            self.month_coef_end = self.param_number
         
-        self.param_number = 2 + self.year_order + 1
+         
 
 
         self.population_fitnesses = np.empty((MU,))
@@ -45,7 +60,7 @@ class Chronos():
 
     
     ################################################################################
-    def init_population(self):
+    def init_population(self, y_mean):
         
         if (self.extra_regressors is None):
             self.population = np.random.normal(scale=2.0, size=(self.MU, self.param_number))
@@ -54,8 +69,29 @@ class Chronos():
         else:
             raise Exception('Chronos::init_population. Can\'t deal with additional regressors yes.')
 
+        self.population[:, 0] = y_mean
+
         
     
+    ################################################################################
+    def make_predictions(self, y_df, the_individual):
+        predictions = the_individual[self.regression_const] \
+                      + (y_df['ts'] * the_individual[self.regression_coef])
+
+        # Yearly seasonality             
+        order = 1
+        for i in range(self.year_coef_start, self.year_coef_end):
+            predictions += the_individual[i] * np.sin((order*y_df['ts']/365.25) + the_individual[self.year_coef_end-1])
+            order += 1
+
+        # Monthly seasonality             
+        order = 1
+        for i in range(self.month_coef_start, self.month_coef_end):
+            predictions += the_individual[i] * np.sin((order * y_df['ts']/31) + the_individual[self.month_coef_end-1])
+            order +=1
+        
+
+        return predictions
     ################################################################################
     def evaluate_population(self, 
                             the_population, 
@@ -65,8 +101,7 @@ class Chronos():
         #print(predictions.shape)
 
         for i in range(the_population.shape[0]): 
-            predictions = the_population[i][0] + (y_df['ts'] * the_population[i][1])
-            predictions += the_population[i][2]* np.sin((y_df['ts']/365.25) + the_population[i][3])
+            predictions = self.make_predictions(y_df, the_population[i])
             population_fitnesses[i] = self.evaluation_function(y_df['y'], predictions)
         
         
@@ -137,15 +172,17 @@ class Chronos():
         self.min_ts = self.train_df['ts'].min()
         self.train_df['ts'] = self.train_df['ts'] - self.min_ts
 
-        self.df_mean = self.train_df['y'].max() - self.train_df['y'].min()
+        self.df_mean = self.train_df['y'].std()
+        print(self.df_mean)
 
         
-        self.init_population()
+        self.init_population(self.train_df['y'].mean())
         print("population initalized")
 
+        base_rm = self.r_m
         for g in range(1, self.G+1):
 
-            self.r_m = 0.1*abs(math.sin(g))
+            self.r_m = base_rm*abs(math.sin(g))
             
             self.evaluate_population(self.population, 
                                      self.population_fitnesses,
@@ -156,7 +193,8 @@ class Chronos():
             
             train_best_fitness = self.find_best_individual()
 
-            print_string += f'\t train_fitness: {train_best_fitness}'
+            print_string += f'train_fitness: {round(train_best_fitness,2)}'
+            #print_string += f'\tbi: {self.best_individual}'
 
             print(print_string, end="\r")
 
@@ -193,7 +231,13 @@ class Chronos():
         self.train_df
 
     ################################################################################
-    def predict(y_hat_df):
+    def predict(self, y_hat_df):
 
-        #_, predictions = self.best_individual_score(y_hat_df, max_lag)
-        pass
+        predict_df = y_hat_df.copy()
+        predict_df['ts'] = predict_df['ds'].astype(np.int64)/(1e9*60*60)
+        predict_df['ts'] = predict_df['ts'] - self.min_ts
+
+        predictions = self.make_predictions(predict_df, self.best_individual)
+        y_hat_df['yhat'] = predictions
+        
+        return y_hat_df
