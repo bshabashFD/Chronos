@@ -182,7 +182,7 @@ class Chronos():
         base_rm = self.r_m
         for g in range(1, self.G+1):
 
-            self.r_m = base_rm*abs(math.sin(g))
+            self.r_m = base_rm*abs(math.sin(g/2))
             
             self.evaluate_population(self.population, 
                                      self.population_fitnesses,
