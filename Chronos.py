@@ -3,10 +3,10 @@ import pandas as pd
 import math
 
 def CHRONOS_RMSE(y_true, y_pred):
-    return np.sqrt(np.nanmean((y_true - y_pred)**2))
+    return np.sqrt(np.nanmean((y_true - y_pred)**2, axis=1))
 
-def CHRONOS_MSE(y_true, y_pred):
-    return np.nanmean(np.abs(y_true - y_pred))
+def CHRONOS_MSE(y_true, y_pred_matrix):
+    return np.nanmean(np.abs(y_true - y_pred), axis=1)
 
 class Chronos():
 
@@ -32,18 +32,17 @@ class Chronos():
         self.regression_const = 0
         self.regression_coef = 1
 
-        if (yearly_seasonality != False):
-            self.year_order = yearly_seasonality
-            self.year_coef_start = self.param_number
+        if (yearly_seasonality == False):
+            yearly_seasonality = 0
+        if (monthly_seasonality == False):
+            monthly_seasonality = 0
 
-            self.param_number += self.year_order + 1
-            self.year_coef_end = self.param_number
-        if (monthly_seasonality != False):
+        if (yearly_seasonality != 0):
+            self.year_order = yearly_seasonality
+            
+        if (monthly_seasonality != 0):
             self.month_order = monthly_seasonality
-            self.month_coef_start = self.param_number
-            self.param_number += self.month_order + 1
-            self.month_coef_end = self.param_number
-        
+            
          
 
 
@@ -60,28 +59,28 @@ class Chronos():
 
     
     ################################################################################
-    def init_population(self, y_mean):
+    def init_population(self):
         
+
         if (self.extra_regressors is None):
-            self.population = np.random.normal(scale=2.0, size=(self.MU, self.param_number))
-            self.offspring = np.zeros(shape=(self.LAMBDA, self.param_number))
+            self.population = np.random.normal(scale=self.train_target.std(), size=(self.MU, self.train_df.shape[1]))
+            self.offspring = np.zeros(shape=(self.LAMBDA, self.train_df.shape[1]))
 
         else:
             raise Exception('Chronos::init_population. Can\'t deal with additional regressors yes.')
 
-        self.population[:, 0] = y_mean
+        #self.population[:, 0] = y_mean
 
         
     
     ################################################################################
     def make_predictions(self, y_df, the_individual):
-        predictions = the_individual[self.regression_const] \
-                      + (y_df['ts'] * the_individual[self.regression_coef])
+        
 
         # Yearly seasonality             
         order = 1
         for i in range(self.year_coef_start, self.year_coef_end):
-            predictions += the_individual[i] * np.sin((order*y_df['ts']/365.25) + the_individual[self.year_coef_end-1])
+            predictions += the_individual[i] * np.sin((order*y_df['ts']/365.25))
             order += 1
 
         # Monthly seasonality             
@@ -100,12 +99,12 @@ class Chronos():
         #predictions = np.full((self.MU, y_df.shape[0]), np.nan)
         #print(predictions.shape)
 
-        for i in range(the_population.shape[0]): 
-            predictions = self.make_predictions(y_df, the_population[i])
-            population_fitnesses[i] = self.evaluation_function(y_df['y'], predictions)
+        predictions = self.train_df.values.dot(the_population.T)
+
         
-        
-        
+        population_fitnesses[:] = self.evaluation_function(y_df.values, predictions.T)
+
+
 
         
     ################################################################################
@@ -130,8 +129,8 @@ class Chronos():
         return winner
     ################################################################################
     def mutate_offspring(self):
-        mutations = np.random.uniform(low=-self.r_m * self.df_mean,
-                                      high=self.r_m * self.df_mean,
+        mutations = np.random.uniform(low=-self.r_m,
+                                      high=self.r_m,
                                       size=self.offspring.shape)
 
         mutations_mask = np.random.binomial(1,
@@ -164,19 +163,42 @@ class Chronos():
 
         return self.evaluation_function(y_df['y'], predictions), predictions
     ################################################################################
+    def create_internal_df(self, tsdf, learn=True):
+
+        internal_df = tsdf.copy()
+        internal_df['const'] = 1.0
+        internal_df['ts'] = internal_df['ds'].astype(np.int64)/(1e9*60*60)
+
+        if (learn == True):
+            self.min_ts = internal_df['ts'].min()
+            train_target = internal_df['y'].copy()
+        else:
+            train_target = None
+        
+
+        
+        
+        internal_df['ts'] = internal_df['ts'] - self.min_ts
+        internal_df.drop(['ds'], axis=1, inplace=True)
+        if ('y' in internal_df):
+            internal_df.drop(['y'], axis=1, inplace=True)
+
+
+        for o in range(1, self.year_order+1):
+            internal_df[f'y_{o}'] = np.sin(o * 2 * math.pi * internal_df['ts']/365.25)
+
+        return internal_df, train_target
+        
+
+    ################################################################################
     def fit(self, 
             tsdf):
 
-        self.train_df = tsdf.copy()
-        self.train_df['ts'] = self.train_df['ds'].astype(np.int64)/(1e9*60*60)
-        self.min_ts = self.train_df['ts'].min()
-        self.train_df['ts'] = self.train_df['ts'] - self.min_ts
+        self.train_df, self.train_target = self.create_internal_df(tsdf)
 
-        self.df_mean = self.train_df['y'].std()
-        print(self.df_mean)
 
         
-        self.init_population(self.train_df['y'].mean())
+        self.init_population()
         print("population initalized")
 
         base_rm = self.r_m
@@ -186,7 +208,7 @@ class Chronos():
             
             self.evaluate_population(self.population, 
                                      self.population_fitnesses,
-                                     self.train_df)
+                                     self.train_target)
 
             print_string = f'g: {g}\t '
 
@@ -209,7 +231,7 @@ class Chronos():
             self.mutate_offspring()
             self.evaluate_population(self.offspring, 
                                      self.offspring_fitnesses,
-                                     self.train_df)
+                                     self.train_target)
 
             for population_index in range(self.MU):
                 selected_index = self.perform_tournament_selection(self.offspring, 
@@ -233,11 +255,38 @@ class Chronos():
     ################################################################################
     def predict(self, y_hat_df):
 
-        predict_df = y_hat_df.copy()
-        predict_df['ts'] = predict_df['ds'].astype(np.int64)/(1e9*60*60)
-        predict_df['ts'] = predict_df['ts'] - self.min_ts
 
-        predictions = self.make_predictions(predict_df, self.best_individual)
+        #predict_df = y_hat_df.copy()
+        #predict_df['const'] = 1.0
+        #predict_df['ts'] = predict_df['ds'].astype(np.int64)/(1e9*60*60)
+        #predict_df['ts'] = predict_df['ts'] - self.min_ts
+        
+
+        #predict_df.drop(['ds'], axis=1, inplace=True)
+
+
+        #if ('y' in predict_df):
+        #    predict_df.drop(['y'], axis=1, inplace=True)
+
+
+        #for o in range(1, self.year_order+1):
+        #    predict_df[f'y_{o}'] = np.sin(o * 2*math.pi * predict_df['ts']/365.25)
+
+        predict_df, _ = self.create_internal_df(y_hat_df)
+        
+        predictions = predict_df.values.dot(self.best_individual.reshape(1, -1).T)
+
         y_hat_df['yhat'] = predictions
         
         return y_hat_df
+
+    ################################################################################
+    def get_params(self):
+        parameters = {}
+        parameters['growth::const'] = self.best_individual[0]
+        parameters['growth::coef'] = self.best_individual[1]
+
+        for o in range(1, self.year_order+1):
+            parameters[f'yearly::order_{o}_coef'] = self.best_individual[o+1]
+
+        return parameters
