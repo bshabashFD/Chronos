@@ -1,11 +1,12 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import math
 
 def CHRONOS_RMSE(y_true, y_pred):
     return np.sqrt(np.nanmean((y_true - y_pred)**2, axis=1))
 
-def CHRONOS_MSE(y_true, y_pred_matrix):
+def CHRONOS_MAE(y_true, y_pred):
     return np.nanmean(np.abs(y_true - y_pred), axis=1)
 
 class Chronos():
@@ -13,13 +14,13 @@ class Chronos():
     ################################################################################
     def __init__(self, 
                  G = 1, 
-                 MU=50, 
-                 LAMBDA=50, 
+                 MU=100, 
+                 LAMBDA=100, 
                  p_m=0.1, 
                  r_m = 0.01,
                  evaluation_function=None,
                  yearly_seasonality=1,
-                 monthly_seasonality=1):
+                 weekly_seasonality=1):
         self.G = G
         self.MU = MU
         self.LAMBDA = LAMBDA
@@ -34,14 +35,14 @@ class Chronos():
 
         if (yearly_seasonality == False):
             yearly_seasonality = 0
-        if (monthly_seasonality == False):
-            monthly_seasonality = 0
+        if (weekly_seasonality == False):
+            weekly_seasonality = 0
 
         if (yearly_seasonality != 0):
             self.year_order = yearly_seasonality
             
-        if (monthly_seasonality != 0):
-            self.month_order = monthly_seasonality
+        if (weekly_seasonality != 0):
+            self.week_order = weekly_seasonality
             
          
 
@@ -52,7 +53,8 @@ class Chronos():
         self.best_individual = None
 
         if (evaluation_function is None):
-            self.evaluation_function = CHRONOS_RMSE
+            self.evaluation_function = CHRONOS_MAE
+            #self.evaluation_function = CHRONOS_RMSE
 
         self.train_history_ = []
         self.validation_history_ = []
@@ -74,30 +76,10 @@ class Chronos():
         
     
     ################################################################################
-    def make_predictions(self, y_df, the_individual):
-        
-
-        # Yearly seasonality             
-        order = 1
-        for i in range(self.year_coef_start, self.year_coef_end):
-            predictions += the_individual[i] * np.sin((order*y_df['ts']/365.25))
-            order += 1
-
-        # Monthly seasonality             
-        order = 1
-        for i in range(self.month_coef_start, self.month_coef_end):
-            predictions += the_individual[i] * np.sin((order * y_df['ts']/31) + the_individual[self.month_coef_end-1])
-            order +=1
-        
-
-        return predictions
-    ################################################################################
     def evaluate_population(self, 
                             the_population, 
                             population_fitnesses,
-                            y_df):
-        #predictions = np.full((self.MU, y_df.shape[0]), np.nan)
-        #print(predictions.shape)
+                            y_df):        
 
         predictions = self.train_df.values.dot(the_population.T)
 
@@ -149,25 +131,16 @@ class Chronos():
     def find_best_individual(self):
         best_train_fitness_position = np.argmin(self.population_fitnesses)
 
-        self.best_individual = self.population[best_train_fitness_position]
+        self.best_individual = self.population[best_train_fitness_position].copy()
 
         return self.population_fitnesses[best_train_fitness_position]
     ################################################################################
-    def best_individual_score(self, y_df, max_lag):
-        
-        predictions = np.full((y_df.shape[0],), np.nan)
-        for i in range(max_lag, y_df.shape[0]):
-            basic_prediction = np.dot(self.best_individual, 
-                                       y_df['y'].iloc[i-max_lag:i].values)
-            predictions[i] = basic_prediction
 
-        return self.evaluation_function(y_df['y'], predictions), predictions
-    ################################################################################
     def create_internal_df(self, tsdf, learn=True):
 
         internal_df = tsdf.copy()
         internal_df['const'] = 1.0
-        internal_df['ts'] = internal_df['ds'].astype(np.int64)/(1e9*60*60)
+        internal_df['ts'] = internal_df['ds'].astype(np.int64)/(1e9*60*60*24)
 
         if (learn == True):
             self.min_ts = internal_df['ts'].min()
@@ -178,14 +151,30 @@ class Chronos():
 
         
         
+        
+        
+
+        year_series = internal_df['ds'].dt.dayofyear
+        for o in range(1, self.year_order+1):
+            internal_df[f'y_{o}'] = np.sin(o * 2 * math.pi * year_series/365.25)
+
+        week_series = internal_df['ds'].dt.dayofweek
+        for o in range(1, self.week_order+1):
+            internal_df[f'w_{o}'] = np.sin(o * 2 * math.pi * week_series/7)
+
+
+        # Put this here so that the time series starts from 0, but the 
+        # seasonality reflects the true day of the series.
+        # If this isn't done, the series can be very high numbers (~4000) and
+        # so a slope of 0.1 gives a first value of 400
         internal_df['ts'] = internal_df['ts'] - self.min_ts
+
         internal_df.drop(['ds'], axis=1, inplace=True)
         if ('y' in internal_df):
             internal_df.drop(['y'], axis=1, inplace=True)
 
-
-        for o in range(1, self.year_order+1):
-            internal_df[f'y_{o}'] = np.sin(o * 2 * math.pi * internal_df['ts']/365.25)
+        #print(internal_df)
+        #assert(False)
 
         return internal_df, train_target
         
@@ -204,7 +193,7 @@ class Chronos():
         base_rm = self.r_m
         for g in range(1, self.G+1):
 
-            self.r_m = base_rm*abs(math.sin(g/2))
+            #self.r_m = base_rm*abs(math.sin(g/2))
             
             self.evaluate_population(self.population, 
                                      self.population_fitnesses,
@@ -286,7 +275,51 @@ class Chronos():
         parameters['growth::const'] = self.best_individual[0]
         parameters['growth::coef'] = self.best_individual[1]
 
-        for o in range(1, self.year_order+1):
-            parameters[f'yearly::order_{o}_coef'] = self.best_individual[o+1]
+        offset = 2
+
+        for o in range(offset, self.year_order+offset):
+            parameters[f'yearly::order_{o+1-offset}_coef'] = self.best_individual[o]
+        
+        offset += self.year_order
+        for o in range(offset, self.week_order+offset):
+            parameters[f'weekly::order_{o-offset+1}_coef'] = self.best_individual[o]
 
         return parameters
+
+    ################################################################################
+    def plot_components(self, the_df):
+
+        predict_df, _ = self.create_internal_df(the_df)
+
+        # Growth
+        plt.figure()
+        plt.plot(the_df['ds'], self.best_individual[0] + predict_df['ts']*self.best_individual[1])
+        plt.show()
+
+        offset = 1
+
+        #Yearly
+        if (self.year_order > 0):
+            plt.figure()
+            X = np.array(range(365), dtype=np.float64)
+            Y = X * 0
+            for o in range(1, self.year_order+1):
+                Y += self.best_individual[offset+o] * np.sin(o * 2 * math.pi * X/365.25)
+
+            plt.plot(X, Y)
+            plt.show()
+
+            offset += self.year_order
+
+        #Yearly
+        if (self.week_order > 0):
+            plt.figure()
+            X = np.array(range(7), dtype=np.float64)
+            Y = X * 0
+            for o in range(1, self.week_order+1):
+                Y += self.best_individual[offset+o] * np.sin(o * 2 * math.pi * X/7)
+
+            plt.plot(X, Y)
+            plt.show()
+
+            offset += self.week_order
