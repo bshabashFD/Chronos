@@ -13,14 +13,14 @@ class Chronos():
 
     ################################################################################
     def __init__(self, 
-                 G = 1, 
+                 G = 1000, 
                  MU=100, 
                  LAMBDA=100, 
                  p_m=0.1, 
-                 r_m = 0.01,
+                 r_m = 0.1,
                  evaluation_function=None,
-                 yearly_seasonality=1,
-                 weekly_seasonality=1):
+                 yearly_seasonality=3,
+                 weekly_seasonality=3):
         self.G = G
         self.MU = MU
         self.LAMBDA = LAMBDA
@@ -150,18 +150,26 @@ class Chronos():
         
 
         
-        
-        
+        self.const_index = 0
+        self.slope_index = 1
+        self.year_index_start = 2
+        self.year_index_end = self.year_index_start 
         
 
         year_series = internal_df['ds'].dt.dayofyear
         for o in range(1, self.year_order+1):
-            internal_df[f'y_{o}'] = np.sin(o * 2 * math.pi * year_series/365.25)
+            internal_df[f'y_s_{o}'] = np.sin(o * 2 * math.pi * year_series/365.25)
+            internal_df[f'y_c_{o}'] = np.cos(o * 2 * math.pi * year_series/365.25)
+            self.year_index_end += 2
+
+        self.week_index_start = self.year_index_end
+        self.week_index_end = self.week_index_start
 
         week_series = internal_df['ds'].dt.dayofweek
         for o in range(1, self.week_order+1):
-            internal_df[f'w_{o}'] = np.sin(o * 2 * math.pi * week_series/7)
-
+            internal_df[f'w_s_{o}'] = np.sin(o * 2 * math.pi * week_series/7)
+            internal_df[f'w_c_{o}'] = np.cos(o * 2 * math.pi * week_series/7)
+            self.week_index_end += 2
 
         # Put this here so that the time series starts from 0, but the 
         # seasonality reflects the true day of the series.
@@ -245,29 +253,14 @@ class Chronos():
     def predict(self, y_hat_df):
 
 
-        #predict_df = y_hat_df.copy()
-        #predict_df['const'] = 1.0
-        #predict_df['ts'] = predict_df['ds'].astype(np.int64)/(1e9*60*60)
-        #predict_df['ts'] = predict_df['ts'] - self.min_ts
-        
-
-        #predict_df.drop(['ds'], axis=1, inplace=True)
-
-
-        #if ('y' in predict_df):
-        #    predict_df.drop(['y'], axis=1, inplace=True)
-
-
-        #for o in range(1, self.year_order+1):
-        #    predict_df[f'y_{o}'] = np.sin(o * 2*math.pi * predict_df['ts']/365.25)
-
         predict_df, _ = self.create_internal_df(y_hat_df)
         
         predictions = predict_df.values.dot(self.best_individual.reshape(1, -1).T)
 
-        y_hat_df['yhat'] = predictions
+        return_df = y_hat_df.copy()
+        return_df['yhat'] = predictions
         
-        return y_hat_df
+        return return_df
 
     ################################################################################
     def get_params(self):
@@ -275,14 +268,17 @@ class Chronos():
         parameters['growth::const'] = self.best_individual[0]
         parameters['growth::coef'] = self.best_individual[1]
 
-        offset = 2
-
-        for o in range(offset, self.year_order+offset):
-            parameters[f'yearly::order_{o+1-offset}_coef'] = self.best_individual[o]
         
-        offset += self.year_order
-        for o in range(offset, self.week_order+offset):
-            parameters[f'weekly::order_{o-offset+1}_coef'] = self.best_individual[o]
+
+        o = 1
+        for i in range(self.year_index_start, self.year_index_end, 2):
+            parameters[f'yearly::order_{o}_coef'] = (self.best_individual[i], self.best_individual[i+1])
+            o += 1
+        
+        o = 1
+        for i in range(self.week_index_start, self.week_index_end, 2):
+            parameters[f'weekly::order_{o}_coef'] = (self.best_individual[i], self.best_individual[i+1])
+            o += 1
 
         return parameters
 
@@ -292,8 +288,10 @@ class Chronos():
         predict_df, _ = self.create_internal_df(the_df)
 
         # Growth
+        intercept = self.best_individual[self.const_index]
+        slope = self.best_individual[self.slope_index]
         plt.figure()
-        plt.plot(the_df['ds'], self.best_individual[0] + predict_df['ts']*self.best_individual[1])
+        plt.plot(the_df['ds'],  intercept + slope * predict_df['ts'])
         plt.show()
 
         offset = 1
@@ -303,8 +301,11 @@ class Chronos():
             plt.figure()
             X = np.array(range(365), dtype=np.float64)
             Y = X * 0
-            for o in range(1, self.year_order+1):
-                Y += self.best_individual[offset+o] * np.sin(o * 2 * math.pi * X/365.25)
+            o = 1
+            for i in range(self.year_index_start, self.year_index_end, 2):
+                Y += self.best_individual[i] * np.sin(o * 2 * math.pi * X/365.25)
+                Y += self.best_individual[i+1] * np.cos(o * 2 * math.pi * X/365.25)
+                o += 1
 
             plt.plot(X, Y)
             plt.show()
@@ -316,8 +317,11 @@ class Chronos():
             plt.figure()
             X = np.array(range(7), dtype=np.float64)
             Y = X * 0
-            for o in range(1, self.week_order+1):
-                Y += self.best_individual[offset+o] * np.sin(o * 2 * math.pi * X/7)
+            o = 1
+            for i in range(self.week_index_start, self.week_index_end, 2):
+                Y += self.best_individual[i] * np.sin(o * 2 * math.pi * X/7)
+                Y += self.best_individual[i+1] * np.cos(o * 2 * math.pi * X/7)
+                o += 1
 
             plt.plot(X, Y)
             plt.show()
