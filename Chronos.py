@@ -203,7 +203,8 @@ class Chronos():
                  r_m = 0.1,
                  evaluation_function="MAE",
                  yearly_seasonality=3,
-                 weekly_seasonality=3):
+                 weekly_seasonality=3,
+                 AR_order=3):
 
         self.G = G
         self.MU = MU
@@ -227,6 +228,8 @@ class Chronos():
             
         if (weekly_seasonality != 0):
             self.week_order = weekly_seasonality
+
+        self.AR_order = AR_order
             
          
         self.test_configurations()
@@ -353,6 +356,11 @@ class Chronos():
             internal_df[f'w_c_{o}'] = np.cos(o * 2 * math.pi * week_series/7)
             self.week_index_end += 2
 
+        for o in range(1, self.AR_order+1):
+            internal_df[f'AR_{o}'] = internal_df['y'].shift(o)
+
+
+        
         # Put this here so that the time series starts from 0, but the 
         # seasonality reflects the true day of the series.
         # If this isn't done, the series can be very high numbers (~4000) and
@@ -364,6 +372,9 @@ class Chronos():
             internal_df.drop(['y'], axis=1, inplace=True)
 
 
+        if (train_target is not None):
+            train_target = train_target[self.AR_order:]
+        internal_df.dropna(inplace=True)
         return internal_df, train_target
         
 
@@ -438,8 +449,13 @@ class Chronos():
         predictions = predict_df.values.dot(self.best_individual.reshape(1, -1).T)
 
         return_df = y_hat_df.copy()
-        return_df['yhat'] = predictions
         
+        return_df['yhat'] = np.nan
+
+        
+        return_df.iloc[self.AR_order:, -1] = predictions
+        
+
         return return_df
 
     ################################################################################
@@ -460,6 +476,9 @@ class Chronos():
             parameters[f'weekly::order_{o}_coef'] = (self.best_individual[i], self.best_individual[i+1])
             o += 1
 
+        for i in range(1, self.AR_order+1):
+            parameters[f'AR::order_{i}_coef'] = self.best_individual[self.week_index_end+i-1]
+
         return parameters
 
     ################################################################################
@@ -471,7 +490,7 @@ class Chronos():
         intercept = self.best_individual[self.const_index]
         slope = self.best_individual[self.slope_index]
         plt.figure(figsize=(15,5))
-        plt.plot(the_df['ds'],  intercept + slope * predict_df['ts'])
+        plt.plot(the_df['ds'].iloc[self.AR_order:],  intercept + slope * predict_df['ts'])
         plt.show()
 
         offset = 1
@@ -507,3 +526,14 @@ class Chronos():
             plt.show()
 
             offset += self.week_order
+
+        # AR component
+        if (self.AR_order > 0):
+            plt.figure(figsize=(15,5))
+            bar_values = []
+            bar_height = []
+            for i in range(1, self.AR_order+1):
+                bar_values.append(f'AR_order_{i}_coef')
+                bar_height.append(self.best_individual[self.week_index_end+i-1])
+            plt.bar(bar_values, bar_height)
+            plt.show()
