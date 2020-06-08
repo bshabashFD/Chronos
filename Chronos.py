@@ -444,9 +444,40 @@ class Chronos():
     def predict(self, y_hat_df):
 
 
-        predict_df, _ = self._create_internal_df(y_hat_df)
+        predict_df, prediction_target = self._create_internal_df(y_hat_df)
+
+        if (self.AR_order > 0):
+
+            prediction_target.iloc[self.AR_order:] = np.nan
+
+            for o in range(1, self.AR_order+1):
+                predict_df[f'AR_{o}'] = np.nan
+
+            #print(predict_df)
+            
+
+            for i in range(self.AR_order, predict_df.shape[0]):
+                #print(f'i={i}-------------------------------')
+                #print(prediction_target)
+                current_row = predict_df.iloc[i]
+
+                for index, j in enumerate(range(self.AR_order, 0, -1)):
+                    current_row.iloc[-j] = prediction_target.iloc[i-1-index]
+                #print(current_row)
+
+                y_hat_result = np.sum(current_row * self.best_individual)
+                
+                prediction_target.iloc[i] = y_hat_result
+
+                
+            prediction_target.iloc[:self.AR_order] = np.nan
+            
+            predictions = prediction_target.values
+        else:
         
-        predictions = predict_df.values.dot(self.best_individual.reshape(1, -1).T)
+            predictions = predict_df.values.dot(self.best_individual.reshape(1, -1).T)
+
+        #print(predictions)
 
         return_df = y_hat_df.copy()
         
