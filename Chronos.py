@@ -204,7 +204,7 @@ class Chronos():
                  evaluation_function="MAE",
                  yearly_seasonality=3,
                  weekly_seasonality=3,
-                 AR_order=3):
+                 AR_order=0):
 
         self.G = G
         self.MU = MU
